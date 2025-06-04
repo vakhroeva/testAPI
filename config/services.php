@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'api' => [
+        'key' => env('API_KEY'),
+        'base_url' => env('WB_API_BASE_URL'),
+    ],
+
 ];
