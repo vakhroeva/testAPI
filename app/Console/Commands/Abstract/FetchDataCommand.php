@@ -70,9 +70,7 @@ abstract class FetchDataCommand extends Command
             do {
                 $queryParams = $this->buildQueryParams(['page' => $page]);
                 $this->info('Параметры запроса: ' . json_encode($queryParams));
-
                 $response = Http::get(config('services.api.base_url') . $this->endpoint, $queryParams);
-
                 $data = $response->json('data');
                 $count = count($data);
 
