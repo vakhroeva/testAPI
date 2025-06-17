@@ -17,8 +17,6 @@ abstract class FetchDataCommand extends Command
     protected string $resolvedDateFrom;
     protected string $resolvedDateTo;
     protected string $resolvedLimit;
-    protected string $tokenType;
-    protected string $tokenData;
 
     protected function isValidDate(string $date): bool
     {
@@ -140,20 +138,6 @@ abstract class FetchDataCommand extends Command
         return true;
     }
 
-    protected function isAllowedService($serviceID, $accountID): bool
-    {
-        $token = ApiToken::where('account_id', $accountID)->where('api_service_id', $serviceID)->first();
-        if (!$token) {
-            $this->error("У аккаунта {$accountID} нет токена для сервиса {$serviceID}");
-            return false;
-        }
-
-        $this->tokenType = $token->tokenType->name;
-        $this->tokenData = $token->token;
-
-        return true;
-    }
-
     public function handle()
     {
         // проверка доступа
@@ -161,12 +145,6 @@ abstract class FetchDataCommand extends Command
         if (!$this->option('cron') && ! $this->isReallyUser($accountID)){
             return Command::FAILURE;
         }
-
-        //проверка апи сервиса
-//        $serviceID = $this->option('serviceID') ?? null;
-//        if (!$this->option('cron') && $accountID && ! $this->isAllowedService($serviceID, $accountID)){
-//            return Command::FAILURE;
-//        }
 
         if (!$this->prepareDates()) {
             return Command::FAILURE;
