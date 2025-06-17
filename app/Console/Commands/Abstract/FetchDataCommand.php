@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands\Abstract;
 
+use App\Models\Account;
+use App\Models\ApiToken;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
-use Symfony\Component\Console\Input\ArgvInput;
 
 abstract class FetchDataCommand extends Command
 {
@@ -15,6 +17,8 @@ abstract class FetchDataCommand extends Command
     protected string $resolvedDateFrom;
     protected string $resolvedDateTo;
     protected string $resolvedLimit;
+    protected string $tokenType;
+    protected string $tokenData;
 
     protected function isValidDate(string $date): bool
     {
@@ -36,17 +40,22 @@ abstract class FetchDataCommand extends Command
         ]);
     }
 
-    protected function getLatestDate()
+    protected function getLatestDate($accountID = null)
     {
         $model = app($this->modelClass);
-        $lastRecord = $model::latest('date')->first();
+
+        if ($accountID){
+            $lastRecord = $model::latest('date')->where('account_id', $accountID)->first();
+        } else {
+            $lastRecord = $model::whereNull('account_id')->latest('date')->first();
+        }
 
         if (!$lastRecord) {
             $this->warn("Последняя дата не найдена, будет использована дата по умолчанию.");
-            return null;
+            return Carbon::createFromTimestamp(0)->format('Y-m-d');
         }
 
-        return $lastRecord ? Carbon::parse($lastRecord->date) : null;
+        return Carbon::parse($lastRecord->date)->format('Y-m-d');
     }
 
     protected function areCorrectDates(): bool
@@ -68,38 +77,97 @@ abstract class FetchDataCommand extends Command
         return true;
     }
 
-    protected function purgeExistingData(): void
+    protected function purgeExistingData($accountID): void
     {
-        $this->info("Удаляем старые записи с {$this->resolvedDateFrom} по {$this->resolvedDateTo}...");
-
         $model = app($this->modelClass);
-        $deleted = $model::whereBetween('date', [$this->resolvedDateFrom, $this->resolvedDateTo])->delete();
+
+        if ($accountID) {
+            $this->info("Удаляем старые записи с {$this->resolvedDateFrom} по {$this->resolvedDateTo} пользователя с ID {$accountID}...");
+            $deleted = $model::whereBetween('date', [$this->resolvedDateFrom, $this->resolvedDateTo])
+                ->where('account_id', $accountID)
+                ->delete();
+        } else {
+            $this->info("Удаляем старые записи с {$this->resolvedDateFrom} по {$this->resolvedDateTo}...");
+            $deleted = $model::whereBetween('date', [$this->resolvedDateFrom, $this->resolvedDateTo])
+                ->whereNull('account_id')
+                ->delete();
+        }
 
         $this->info("Удалено записей: {$deleted}");
     }
 
-    protected function prepareDates() : bool
+    protected function prepareDates(): bool
     {
         $isCron = $this->option('cron');
         $dateFrom = $this->option('dateFrom');
         $dateTo = $this->option('dateTo');
+        $accountID = $this->option('accountID') ?? null;
 
         if (!$isCron) {
-            $this->resolvedDateFrom = $dateFrom ?: Carbon::createFromTimestamp(0)->format('Y-m-d');
+            $this->resolvedDateFrom = $dateFrom ?: $this->getLatestDate($accountID);
             $this->resolvedDateTo = $dateTo ?: now()->format('Y-m-d');
 
             // Если даты указаны из консоли, должны проверить, что они корректны
             return $this->areCorrectDates();
         } else {
             $latest = $this->getLatestDate();
-            $this->resolvedDateFrom = $latest ? $latest->format('Y-m-d') : Carbon::createFromTimestamp(0)->format('Y-m-d');
+            $this->resolvedDateFrom = $latest;
             $this->resolvedDateTo = now()->format('Y-m-d');
             return true;
         }
     }
 
+    protected function isReallyUser($accountID): bool{
+        if (!$accountID) {
+            $this->error("Флаг --accountID при ручном запуске обязателен.");
+            return false;
+        }
+
+        $account = Account::find($accountID);
+
+        if (!$account) {
+            $this->error("Аккаунт с ID {$accountID} не найден.");
+            return false;
+        }
+
+        $password = $this->secret('Введите пароль');
+
+        if (!Hash::check($password, $account->password)) {
+            $this->error('Пароль не верный. Выполнение команды запрещено');
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function isAllowedService($serviceID, $accountID): bool
+    {
+        $token = ApiToken::where('account_id', $accountID)->where('api_service_id', $serviceID)->first();
+        if (!$token) {
+            $this->error("У аккаунта {$accountID} нет токена для сервиса {$serviceID}");
+            return false;
+        }
+
+        $this->tokenType = $token->tokenType->name;
+        $this->tokenData = $token->token;
+
+        return true;
+    }
+
     public function handle()
     {
+        // проверка доступа
+        $accountID = $this->option('accountID') ?? null;
+        if (!$this->option('cron') && ! $this->isReallyUser($accountID)){
+            return Command::FAILURE;
+        }
+
+        //проверка апи сервиса
+//        $serviceID = $this->option('serviceID') ?? null;
+//        if (!$this->option('cron') && $accountID && ! $this->isAllowedService($serviceID, $accountID)){
+//            return Command::FAILURE;
+//        }
+
         if (!$this->prepareDates()) {
             return Command::FAILURE;
         }
@@ -122,8 +190,8 @@ abstract class FetchDataCommand extends Command
         $retryDelaySeconds = 1;   // Начальная задержка для повторов (в секундах)
 
         try {
-            DB::transaction(function () use (&$written_lines, &$total_lines, &$page, $limit, &$retryDelaySeconds, $maxRetries) {
-                $this->purgeExistingData();
+            DB::transaction(function () use (&$written_lines, &$total_lines, &$page, $limit, &$retryDelaySeconds, $maxRetries, $accountID) {
+                $this->purgeExistingData($accountID);
 
                 //throw new \Exception("Тестовая ошибка для проверки отката транзакции");
 
@@ -160,18 +228,19 @@ abstract class FetchDataCommand extends Command
 
                     foreach ($data as $item) {
                         try {
-                            $this->modelClass::create($item);
+                            if ($accountID) {
+                                $item['account_id'] = (int) $accountID;
+                            }
+                            $created = $this->modelClass::create($item);
                             $written_lines++;
+
+                            //$this->info('Создана запись: ' . $created->toJson(JSON_PRETTY_PRINT));
 
                             //throw new \Exception("Тестовая ошибка для проверки отката транзакции");
                         } catch (\Exception $e) {
-
-                            if ($this->isCritical($e)) {
-                                throw $e; // проброс наружу - вызовет откат, иначе - не даст откатиться транзакции
-                            }
-
                             $this->error("Ошибка при создании записи: " . $e->getMessage());
                             $this->error("Данные: " . json_encode($item));
+                            throw $e; // проброс наружу - вызовет откат, иначе - не даст откатиться транзакции
                         }
                     }
 

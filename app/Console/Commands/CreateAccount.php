@@ -5,6 +5,8 @@ namespace App\Console\Commands;
 use App\Models\Account;
 use App\Models\Company;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 
 class CreateAccount extends Command
 {
@@ -47,10 +49,29 @@ class CreateAccount extends Command
             return Command::FAILURE;
         }
 
+        $password = $this->secret('Придумайте пароль');
+
+        $validator = Validator::make(['password' => $password], [
+            'password' => [
+                'required',
+                'string',
+                'min:4',
+                'max:6'
+            ],
+        ]);
+
+        if ($validator->fails()) {
+            foreach ($validator->errors()->all() as $message) {
+                $this->error($message);
+            }
+            return Command::FAILURE;
+        }
+
         // Создание аккаунта
         $account = Account::create([
             'company_id' => $company->id,
             'name' => $name,
+            'password' => Hash::make($password),
         ]);
 
         $this->info("Аккаунт '{$account->name}' успешно создан для компании '{$company->name}'.");

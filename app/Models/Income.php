@@ -20,6 +20,7 @@ class Income extends Model
         'date_close',
         'warehouse_name',
         'nm_id',
+        'account_id'
     ];
 
     public function setDateAttribute($value): void

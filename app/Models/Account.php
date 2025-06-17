@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Account extends Model
 {
-    protected $fillable = ['name', 'company_id'];
+    protected $fillable = ['name', 'company_id', 'password'];
 
     public function company() : BelongsTo
     {

@@ -15,6 +15,7 @@ class FetchStocks extends FetchDataCommand
      * @var string
      */
     protected $signature = 'fetch:stocks
+        {--accountID= : Идентификатор аккаунта, обязателен для ручного запуска}
         {--dateFrom= : Дата выгрузки Y-m-d (необязательно, игнорируется)}
         {--limit=500 : Количество записей (максимум: 500, минимум: 1, по умолчанию: 500)}
         {--cron : Запуск из расписания}';
@@ -39,18 +40,27 @@ class FetchStocks extends FetchDataCommand
         ]);
     }
 
-    protected function purgeExistingData(): void
+    protected function purgeExistingData($accountID): void
     {
-        $today = now()->toDateString();
-        $this->info("Удаляем записи за {$today}...");
-
         $model = app($this->modelClass);
-        $deleted = $model::whereDate('date', $today)->delete();
+        $today = now()->toDateString();
+
+        if ($accountID) {
+            $this->info("Удаляем записи за {$today} пользователя с ID {$accountID}...");
+            $deleted = $model::whereDate('date', $today)
+                ->where('account_id', $accountID)
+                ->delete();
+        } else {
+            $this->info("Удаляем записи за {$today}...");
+            $deleted = $model::whereDate('date', $today)
+                ->whereNull('account_id')
+                ->delete();
+        }
 
         $this->info("Удалено записей: {$deleted}");
     }
 
-    protected function prepareDates() : bool
+    protected function prepareDates(): bool
     {
         $this->resolvedDateFrom = now()->toDateString();
         if (filled($this->option('dateFrom'))) {
