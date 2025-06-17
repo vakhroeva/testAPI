@@ -3,7 +3,6 @@
 namespace App\Console\Commands\Abstract;
 
 use App\Models\Account;
-use App\Models\ApiToken;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -108,9 +107,8 @@ abstract class FetchDataCommand extends Command
             // Если даты указаны из консоли, должны проверить, что они корректны
             return $this->areCorrectDates();
         } else {
-            $latest = $this->getLatestDate();
-            $this->resolvedDateFrom = $latest;
-            $this->resolvedDateTo = now()->format('Y-m-d');
+            $this->resolvedDateFrom = $dateFrom ?: $this->getLatestDate();
+            $this->resolvedDateTo = $dateTo ?: now()->format('Y-m-d');
             return true;
         }
     }
@@ -142,8 +140,16 @@ abstract class FetchDataCommand extends Command
     {
         // проверка доступа
         $accountID = $this->option('accountID') ?? null;
-        if (!$this->option('cron') && ! $this->isReallyUser($accountID)){
-            return Command::FAILURE;
+
+        if ($this->option('cron')) {
+            if ($accountID) {
+                $this->error('С опцией --cron недопустимо использовать --accountID');
+                return Command::FAILURE;
+            }
+        } else {
+            if (! $this->isReallyUser($accountID)){
+                return Command::FAILURE;
+            }
         }
 
         if (!$this->prepareDates()) {
