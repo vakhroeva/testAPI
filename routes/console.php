@@ -9,7 +9,12 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
 
-Schedule::command(FetchIncomes::class . ' --cron')->twiceDaily(8, 20);
-Schedule::command(FetchOrders::class . ' --cron')->twiceDaily(8, 20);
-Schedule::command(FetchSales::class . ' --cron')->twiceDaily(8, 20);
-Schedule::command(FetchStocks::class . ' --cron')->twiceDaily(8, 20);
+//Schedule::command(FetchIncomes::class . ' --cron')->twiceDaily(8, 20);
+//Schedule::command(FetchOrders::class . ' --cron')->twiceDaily(8, 20);
+//Schedule::command(FetchSales::class . ' --cron')->twiceDaily(8, 20);
+//Schedule::command(FetchStocks::class . ' --cron')->twiceDaily(8, 20);
+
+Schedule::command('fetch:incomes --cron')->twiceDaily(8, 20);
+Schedule::command('fetch:orders --cron')->twiceDaily(8, 20);
+Schedule::command('fetch:sales --cron')->twiceDaily(8, 20);
+Schedule::command('fetch:stocks --cron')->twiceDaily(8, 20);
