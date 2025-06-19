@@ -9,7 +9,7 @@ class Company extends Model
 {
     protected $fillable = ['name'];
 
-    public function accounts() : HasMany
+    public function accounts(): HasMany
     {
         return $this->hasMany(Account::class);
     }

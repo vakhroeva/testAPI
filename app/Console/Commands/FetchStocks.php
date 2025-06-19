@@ -45,22 +45,15 @@ class FetchStocks extends FetchDataCommand
         $model = app($this->modelClass);
         $today = now()->toDateString();
 
-        if ($accountID) {
-            $this->info("Удаляем записи за {$today} пользователя с ID {$accountID}...");
-            $deleted = $model::whereDate('date', $today)
-                ->where('account_id', $accountID)
-                ->delete();
-        } else {
-            $this->info("Удаляем записи за {$today}...");
-            $deleted = $model::whereDate('date', $today)
-                ->whereNull('account_id')
-                ->delete();
-        }
+        $this->info("Удаляем записи за {$today} пользователя с ID {$accountID}...");
+        $deleted = $model::whereDate('date', $today)
+            ->where('account_id', $accountID)
+            ->delete();
 
         $this->info("Удалено записей: {$deleted}");
     }
 
-    protected function prepareDates(): bool
+    protected function prepareDates($accountID): bool
     {
         $this->resolvedDateFrom = now()->toDateString();
         if (filled($this->option('dateFrom'))) {

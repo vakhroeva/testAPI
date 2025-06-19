@@ -3,6 +3,8 @@
 namespace App\Console\Commands\Abstract;
 
 use App\Models\Account;
+use App\Models\ApiService;
+use App\Models\ApiToken;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +18,7 @@ abstract class FetchDataCommand extends Command
     protected string $resolvedDateFrom;
     protected string $resolvedDateTo;
     protected string $resolvedLimit;
+    protected string $token;
 
     protected function isValidDate(string $date): bool
     {
@@ -33,7 +36,7 @@ abstract class FetchDataCommand extends Command
             'dateFrom' => $this->resolvedDateFrom,
             'dateTo' => $this->resolvedDateTo,
             'limit' => $this->resolvedLimit,
-            'key' => config('services.api.key'),
+            'key' => $this->token ?? config('services.api.key'),
         ]);
     }
 
@@ -41,11 +44,7 @@ abstract class FetchDataCommand extends Command
     {
         $model = app($this->modelClass);
 
-        if ($accountID){
-            $lastRecord = $model::latest('date')->where('account_id', $accountID)->first();
-        } else {
-            $lastRecord = $model::whereNull('account_id')->latest('date')->first();
-        }
+        $lastRecord = $model::latest('date')->where('account_id', $accountID)->first();
 
         if (!$lastRecord) {
             $this->warn("Последняя дата не найдена, будет использована дата по умолчанию.");
@@ -78,39 +77,23 @@ abstract class FetchDataCommand extends Command
     {
         $model = app($this->modelClass);
 
-        if ($accountID) {
-            $this->info("Удаляем старые записи с {$this->resolvedDateFrom} по {$this->resolvedDateTo} пользователя с ID {$accountID}...");
-            $deleted = $model::whereBetween('date', [$this->resolvedDateFrom, $this->resolvedDateTo])
-                ->where('account_id', $accountID)
-                ->delete();
-        } else {
-            $this->info("Удаляем старые записи с {$this->resolvedDateFrom} по {$this->resolvedDateTo}...");
-            $deleted = $model::whereBetween('date', [$this->resolvedDateFrom, $this->resolvedDateTo])
-                ->whereNull('account_id')
-                ->delete();
-        }
+        $this->info("Удаляем старые записи с {$this->resolvedDateFrom} по {$this->resolvedDateTo} пользователя с ID {$accountID}...");
+        $deleted = $model::whereBetween('date', [$this->resolvedDateFrom, $this->resolvedDateTo])
+            ->where('account_id', $accountID)
+            ->delete();
 
         $this->info("Удалено записей: {$deleted}");
     }
 
-    protected function prepareDates(): bool
+    protected function prepareDates($accountID): bool
     {
-        $isCron = $this->option('cron');
         $dateFrom = $this->option('dateFrom');
         $dateTo = $this->option('dateTo');
-        $accountID = $this->option('accountID') ?? null;
 
-        if (!$isCron) {
-            $this->resolvedDateFrom = $dateFrom ?: $this->getLatestDate($accountID);
-            $this->resolvedDateTo = $dateTo ?: now()->format('Y-m-d');
+        $this->resolvedDateFrom = $dateFrom ?: $this->getLatestDate($accountID);
+        $this->resolvedDateTo = $dateTo ?: now()->format('Y-m-d');
 
-            // Если даты указаны из консоли, должны проверить, что они корректны
-            return $this->areCorrectDates();
-        } else {
-            $this->resolvedDateFrom = $dateFrom ?: $this->getLatestDate();
-            $this->resolvedDateTo = $dateTo ?: now()->format('Y-m-d');
-            return true;
-        }
+        return $this->areCorrectDates();
     }
 
     protected function isReallyUser($accountID): bool{
@@ -136,36 +119,38 @@ abstract class FetchDataCommand extends Command
         return true;
     }
 
-    public function handle()
+    protected function prepareForAutomaticRunning()
     {
-        // проверка доступа
-        $accountID = $this->option('accountID') ?? null;
+        // 1. Определяем API по базовому URL
+        $apiService = ApiService::where('name', config('services.api.base_url'))->first();
 
-        if ($this->option('cron')) {
-            if ($accountID) {
-                $this->error('С опцией --cron недопустимо использовать --accountID');
-                return Command::FAILURE;
-            }
-        } else {
-            if (! $this->isReallyUser($accountID)){
-                return Command::FAILURE;
-            }
+        if (!$apiService) {
+            $this->error("Данного сервиса нет в базе данных.");
+            return collect();
         }
 
-        if (!$this->prepareDates()) {
-            return Command::FAILURE;
+        // 2. Получаем разрешенные токены для этого сервиса
+        $allowedTypes = $apiService->allowedApiTokenTypes()->pluck('token_types.id')->toArray();
+
+        // 3. Загружаем ApiToken, валидируем
+        $apiTokens = ApiToken::where('api_service_id', $apiService->id)
+            ->whereIn('token_type_id', $allowedTypes)
+            ->get()
+            ->groupBy('account_id')
+            ->map(fn($tokens) => $tokens->first());
+
+        if ($apiTokens->isEmpty()) {
+            $this->warn("Нет корректных токенов для сервиса '{$apiService->name}'.");
+            return collect();
         }
 
-        $limit = (int) $this->option('limit');
+        return $apiTokens;
+    }
 
-        if ($limit < 1 || $limit > 500) {
-            $this->error('Лимит должен быть от 1 до 500.');
-            return Command::FAILURE;
-        }
-
-        $this->resolvedLimit = $limit;
-
+    protected function fetchData($accountID)
+    {
         $this->info("Загружаем данные из {$this->endpoint}...");
+        $limit = $this->resolvedLimit;
         $page = 1;
         $written_lines = 0;
         $total_lines = 0;
@@ -204,7 +189,7 @@ abstract class FetchDataCommand extends Command
                         throw new \Exception("Ошибка HTTP: " . $response->status());
                     }
 
-                    $data = $response->json('data');
+                    $data = $response->json('data')?? [];
                     $count = count($data);
                     $this->info('Ответ успешно получен');
 
@@ -228,11 +213,13 @@ abstract class FetchDataCommand extends Command
                         }
                     }
 
+                    if ($count < $limit) break;
+
                     $page++;
 
                     $retryDelaySeconds = 1;
 
-                } while ($count === $limit);
+                } while (true);
             });
 
         } catch (\Exception $e) {
@@ -243,6 +230,71 @@ abstract class FetchDataCommand extends Command
 
         $this->info("Загрузка окончена. Получено записей: $total_lines. Добавлено записей: $written_lines.");
         return Command::SUCCESS;
+    }
 
+
+    public function handle()
+    {
+        $limit = (int) $this->option('limit');
+
+        if ($limit < 1 || $limit > 500) {
+            $this->error('Лимит должен быть от 1 до 500.');
+            return Command::FAILURE;
+        }
+
+        $this->resolvedLimit = $limit;
+
+        // проверка доступа
+        $accountID = $this->option('accountID') ?? null;
+
+        if ($this->option('cron')) {
+            if ($accountID) {
+                $this->error('С опцией --cron недопустимо использовать --accountID');
+                return Command::FAILURE;
+            }
+
+            $apiTokens = $this->prepareForAutomaticRunning();
+
+            if ($apiTokens->isEmpty()) {
+                return Command::FAILURE;
+            }
+
+            $updatedCount = 0;
+            //запросить для каждого аккаунта
+            foreach ($apiTokens as $apiToken) {
+                $this->warn("Заупск для аккаунта с ID $apiToken->account_id");
+                $this->token = $apiToken->token;
+
+                if (!$this->prepareDates($apiToken->account_id)) {
+                    return Command::FAILURE;
+                }
+
+                $result = $this->fetchData($apiToken->account_id);
+
+                if ($result === Command::SUCCESS) {
+                    $updatedCount++;
+                }
+            }
+
+            $this->info("Обновлено пользователей: {$updatedCount}");
+            return Command::SUCCESS;
+
+        } else {
+            if (! $this->isReallyUser($accountID)){
+                return Command::FAILURE;
+            }
+        }
+
+        if (!$this->prepareDates($accountID)) {
+            return Command::FAILURE;
+        }
+
+        if ($accountID) {
+            $this->fetchData($accountID);
+        } else {
+            $this->fetchData();
+        }
+
+        return Command::SUCCESS;
     }
 }

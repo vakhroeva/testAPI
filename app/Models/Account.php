@@ -10,12 +10,12 @@ class Account extends Model
 {
     protected $fillable = ['name', 'company_id', 'password'];
 
-    public function company() : BelongsTo
+    public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
     }
 
-    public function apiTokens() : HasMany
+    public function apiTokens(): HasMany
     {
         return $this->hasMany(ApiToken::class);
     }

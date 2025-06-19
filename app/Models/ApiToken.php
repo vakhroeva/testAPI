@@ -9,17 +9,17 @@ class ApiToken extends Model
 {
     protected $fillable = ['account_id', 'api_service_id', 'token_type_id', 'token'];
 
-    public function account() : BelongsTo
+    public function account(): BelongsTo
     {
         return $this->belongsTo(Account::class);
     }
 
-    public function apiService() : BelongsTo
+    public function apiService(): BelongsTo
     {
         return $this->belongsTo(ApiService::class);
     }
 
-    public function tokenType() : BelongsTo
+    public function tokenType(): BelongsTo
     {
         return $this->belongsTo(TokenType::class);
     }
